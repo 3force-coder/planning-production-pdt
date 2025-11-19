@@ -106,7 +106,7 @@ st.markdown("""
         3Force Consulting × Culture Pom
     </div>
     <div style="font-size: 0.65rem; color: #888; margin-top: 3px;">
-        © 2024 Tous droits réservés
+        © 2025 Tous droits réservés
     </div>
 </div>
 """, unsafe_allow_html=True)
