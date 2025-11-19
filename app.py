@@ -369,12 +369,25 @@ def page_previsions(data, spreadsheet):
                     if st.button("✅ Écrire dans Google Sheets"):
                         try:
                             worksheet = spreadsheet.worksheet('Previsions')
-                            # Logique d'écriture ici
-                            st.success("✅ Écrit dans Google Sheets")
+                            
+                            # Ajouter les extrapolations
+                            for _, row in df_extrap.iterrows():
+                                nouvelle_ligne = [
+                                    int(row['Semaine_Num']),
+                                    '', # Date_Debut à compléter
+                                    row['Code_Produit'],
+                                    float(row['Volume_Prévu_T']),
+                                    'EXTRAPOLÉE',
+                                    'Prévisionnel',
+                                    '', '', '', ''
+                                ]
+                                worksheet.append_row(nouvelle_ligne)
+                            
+                            st.success("✅ Extrapolations écrites dans Google Sheets")
                             st.cache_data.clear()
                             st.rerun()
                         except Exception as e:
-                            st.error(f"Erreur : {e}")
+                            st.error(f"❌ Erreur : {e}")
                 else:
                     st.error("Moins de 3 semaines de prévisions")
 
@@ -418,10 +431,71 @@ def page_affectations(data, spreadsheet):
                     lot = st.selectbox("Lot", lots_comp['Lot_ID'].tolist())
                     
                     if st.button("✅ Créer l'affectation", type="primary"):
-                        # Logique création
-                        st.success("✅ Affectation créée")
-                        st.cache_data.clear()
-                        st.rerun()
+                        try:
+                            # Calculer les données
+                            lot_data = data['Lots'][data['Lots']['Lot_ID'] == lot].iloc[0]
+                            previsions = data['Previsions'].copy()
+                            
+                            if semaine_fin == "*":
+                                prev_periode = previsions[
+                                    (previsions['Code_Produit'] == produit) &
+                                    (previsions['Semaine_Num'] >= semaine_debut)
+                                ]
+                                semaine_fin_texte = "Épuisement"
+                            else:
+                                prev_periode = previsions[
+                                    (previsions['Code_Produit'] == produit) &
+                                    (previsions['Semaine_Num'] >= semaine_debut) &
+                                    (previsions['Semaine_Num'] <= int(semaine_fin))
+                                ]
+                                semaine_fin_texte = str(int(semaine_fin))
+                            
+                            tonnage_net = prev_periode['Volume_Prévu_T'].sum() if len(prev_periode) > 0 else 0
+                            taux_dechet = lot_data['Taux_Déchet_Estimé']
+                            
+                            if taux_dechet > 1:
+                                taux_dechet = taux_dechet / 100
+                            
+                            tonnage_brut = tonnage_net / (1 - taux_dechet) if tonnage_net > 0 else 0
+                            tonnage_dispo = lot_data['Tonnage_Brut_Restant']
+                            ecart = tonnage_dispo - tonnage_brut
+                            
+                            # Générer ID
+                            affectations = data['Affectations']
+                            if len(affectations) == 0:
+                                nouvel_id = 'AFF_001'
+                            else:
+                                dernier_id = affectations['ID_Affectation'].max()
+                                if pd.isna(dernier_id) or dernier_id == '':
+                                    nouvel_id = 'AFF_001'
+                                else:
+                                    numero = int(dernier_id.split('_')[1]) + 1
+                                    nouvel_id = f'AFF_{numero:03d}'
+                            
+                            # Écrire dans Google Sheets
+                            worksheet = spreadsheet.worksheet('Affectations')
+                            nouvelle_ligne = [
+                                nouvel_id,
+                                datetime.now().strftime('%Y-%m-%d %H:%M'),
+                                produit,
+                                int(semaine_debut),
+                                semaine_fin_texte,
+                                lot,
+                                float(tonnage_dispo),
+                                float(tonnage_brut),
+                                float(ecart),
+                                'Active',
+                                'Streamlit',
+                                ''
+                            ]
+                            worksheet.append_row(nouvelle_ligne)
+                            
+                            st.success(f"✅ Affectation {nouvel_id} créée dans Google Sheets")
+                            st.cache_data.clear()
+                            st.rerun()
+                            
+                        except Exception as e:
+                            st.error(f"❌ Erreur : {e}")
                 else:
                     st.warning("Aucun lot compatible")
     
