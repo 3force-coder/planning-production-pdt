@@ -15,7 +15,7 @@ from io import BytesIO
 
 # Configuration page
 st.set_page_config(
-    page_title="Planning Production PDT",
+    page_title="Planning Production - Culture Pom",
     page_icon="🥔",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -24,24 +24,91 @@ st.set_page_config(
 # CSS personnalisé
 st.markdown("""
 <style>
+    /* Header principal */
     .main-header {
         font-size: 2.5rem;
         font-weight: bold;
-        color: #2E7D32;
+        color: #6B7F3B;
         text-align: center;
         padding: 1rem;
-        background: linear-gradient(90deg, #81C784 0%, #66BB6A 100%);
+        background: linear-gradient(90deg, #8FA94B 0%, #6B7F3B 100%);
         border-radius: 10px;
         margin-bottom: 2rem;
         color: white;
     }
+    
+    /* Métriques - même hauteur */
     .stMetric {
         background-color: #f0f2f6;
-        padding: 1rem;
+        padding: 1.5rem 1rem;
         border-radius: 10px;
-        border-left: 5px solid #2E7D32;
+        border-left: 5px solid #6B7F3B;
+        min-height: 120px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+    }
+    
+    /* Sidebar */
+    [data-testid="stSidebar"] {
+        background-color: #F5F5F0;
+    }
+    
+    /* Boutons */
+    .stButton>button {
+        background-color: #6B7F3B;
+        color: white;
+        border-radius: 8px;
+        border: none;
+        padding: 0.5rem 1rem;
+        font-weight: 500;
+    }
+    
+    .stButton>button:hover {
+        background-color: #8FA94B;
+    }
+    
+    /* Logo et crédits */
+    .footer-credits {
+        position: fixed;
+        bottom: 10px;
+        right: 10px;
+        background-color: rgba(255, 255, 255, 0.9);
+        padding: 8px 15px;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        font-size: 0.75rem;
+        text-align: right;
+        z-index: 999;
+    }
+    
+    .footer-credits img {
+        max-height: 30px;
+        vertical-align: middle;
+        margin-left: 5px;
     }
 </style>
+""", unsafe_allow_html=True)
+
+# Logo et titre dans la sidebar
+with st.sidebar:
+    st.image("https://www.culturepom.com/wp-content/uploads/2023/01/LogoCulturePom.webp", 
+             use_container_width=True)
+    st.markdown("---")
+
+# Footer avec crédits
+st.markdown("""
+<div class="footer-credits">
+    <div style="margin-bottom: 5px;">
+        🇫🇷 Réalisé en France avec passion
+    </div>
+    <div style="font-weight: 600; color: #6B7F3B;">
+        3Force Consulting × Culture Pom
+    </div>
+    <div style="font-size: 0.65rem; color: #888; margin-top: 3px;">
+        © 2024 Tous droits réservés
+    </div>
+</div>
 """, unsafe_allow_html=True)
 
 # =============================================================================
@@ -568,6 +635,104 @@ def page_planning_production(data):
         st.info("💡 Créez des affectations et exécutez le workflow Colab")
 
 # =============================================================================
+# PAGE : PLANNING LAVAGE
+# =============================================================================
+
+def page_planning_lavage(data):
+    st.markdown('<div class="main-header">🧼 PLANNING LAVAGE</div>', unsafe_allow_html=True)
+    
+    if len(data['Planning_Lavage']) > 0:
+        planning = data['Planning_Lavage'].copy()
+        
+        # Filtres
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            semaines = ['Toutes'] + sorted(planning['Semaine_Num'].unique().tolist())
+            sem_select = st.selectbox("Semaine", semaines)
+        
+        with col2:
+            lignes = ['Toutes'] + list(planning['Ligne_Lavage'].unique())
+            ligne_select = st.selectbox("Ligne", lignes)
+        
+        # Filtrer
+        if sem_select != 'Toutes':
+            planning = planning[planning['Semaine_Num'] == sem_select]
+        if ligne_select != 'Toutes':
+            planning = planning[planning['Ligne_Lavage'] == ligne_select]
+        
+        st.dataframe(planning, use_container_width=True)
+        
+        # Stats
+        st.markdown("### Statistiques")
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.metric("Opérations", len(planning))
+        with col2:
+            st.metric("Tonnage brut", f"{planning['Tonnage_Brut'].sum():.0f}T")
+        with col3:
+            st.metric("Lignes utilisées", planning['Ligne_Lavage'].nunique())
+        
+        # Graphique
+        stats_ligne = planning.groupby('Ligne_Lavage')['Tonnage_Brut'].sum().reset_index()
+        fig = px.bar(stats_ligne, x='Ligne_Lavage', y='Tonnage_Brut',
+                    title='Tonnage par ligne de lavage')
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("Aucun planning lavage généré")
+        st.info("💡 Créez des affectations et exécutez le workflow Colab")
+
+# =============================================================================
+# PAGE : ALERTES STOCKS
+# =============================================================================
+
+def page_alertes_stocks(data):
+    st.markdown('<div class="main-header">⚠️ ALERTES STOCKS</div>', unsafe_allow_html=True)
+    
+    if len(data['Alerte_Stocks']) > 0:
+        alertes = data['Alerte_Stocks'].copy()
+        
+        # Compter par statut
+        nb_manque = len(alertes[alertes['Statut'].str.contains('MANQUE', na=False)])
+        nb_limite = len(alertes[alertes['Statut'].str.contains('LIMITE', na=False)])
+        nb_ok = len(alertes[alertes['Statut'].str.contains('OK', na=False)])
+        
+        # KPIs
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("❌ Manques", nb_manque)
+        with col2:
+            st.metric("⚠️ Limites", nb_limite)
+        with col3:
+            st.metric("✅ OK", nb_ok)
+        
+        st.markdown("---")
+        
+        # Filtres
+        filtre_statut = st.multiselect(
+            "Filtrer par statut",
+            options=['❌ MANQUE', '⚠️ LIMITE', '✅ OK'],
+            default=['❌ MANQUE', '⚠️ LIMITE']
+        )
+        
+        if filtre_statut:
+            alertes_filtrees = alertes[alertes['Statut'].isin(filtre_statut)]
+        else:
+            alertes_filtrees = alertes
+        
+        st.dataframe(alertes_filtrees, use_container_width=True)
+        
+        # Graphique
+        fig = px.bar(alertes_filtrees, x='Code_Variété', y='Écart_T',
+                    color='Statut', title='Écarts de stock par variété')
+        st.plotly_chart(fig, use_container_width=True)
+        
+    else:
+        st.info("Aucune alerte générée")
+        st.info("💡 Exécutez le workflow Colab pour générer les alertes")
+
+# =============================================================================
 # PAGE : EXPORT
 # =============================================================================
 
@@ -636,8 +801,12 @@ def main():
         page_previsions(data, spreadsheet)
     elif menu == "🎯 Affectations":
         page_affectations(data, spreadsheet)
+    elif menu == "🧼 Planning Lavage":
+        page_planning_lavage(data)
     elif menu == "🏭 Planning Production":
         page_planning_production(data)
+    elif menu == "⚠️ Alertes Stocks":
+        page_alertes_stocks(data)
     elif menu == "💾 Export":
         page_export(data)
     else:
