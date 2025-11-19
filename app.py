@@ -52,8 +52,21 @@ st.markdown("""
 def connect_to_sheets():
     """Connexion à Google Sheets"""
     try:
-        # Streamlit Cloud secrets
-        if 'gcp_service_account' in st.secrets:
+        import os
+        import json
+        
+        # Heroku : variables d'environnement
+        if 'GCP_SERVICE_ACCOUNT' in os.environ:
+            service_account_info = json.loads(os.environ['GCP_SERVICE_ACCOUNT'])
+            creds = Credentials.from_service_account_info(
+                service_account_info,
+                scopes=[
+                    "https://www.googleapis.com/auth/spreadsheets",
+                    "https://www.googleapis.com/auth/drive"
+                ]
+            )
+        # Streamlit Cloud : secrets
+        elif 'gcp_service_account' in st.secrets:
             creds = Credentials.from_service_account_info(
                 st.secrets["gcp_service_account"],
                 scopes=[
