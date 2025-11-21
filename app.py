@@ -12,6 +12,21 @@ from google.oauth2.service_account import Credentials
 import plotly.express as px
 import plotly.graph_objects as go
 from io import BytesIO
+import json
+import os
+
+# Tentative d'import du module PDF
+try:
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import cm
+    from reportlab.lib import colors
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.enums import TA_CENTER
+    PDF_AVAILABLE = True
+except Exception as e:
+    PDF_AVAILABLE = False
+    print(f"PDF module not available: {e}")
 
 # Configuration page
 st.set_page_config(
@@ -132,11 +147,8 @@ st.markdown("""
 
 @st.cache_resource
 def connect_to_sheets():
-    """Connexion à Google Sheets"""
+    """Connexion à Google Sheets avec gestion d'erreurs améliorée"""
     try:
-        import os
-        import json
-        
         # Heroku : variables d'environnement
         if 'GCP_SERVICE_ACCOUNT' in os.environ:
             service_account_info = json.loads(os.environ['GCP_SERVICE_ACCOUNT'])
@@ -157,10 +169,11 @@ def connect_to_sheets():
                 ]
             )
         else:
-            # OAuth local
-            from google.auth import default
-            creds, _ = default()
+            st.error("❌ Aucune authentification configurée")
+            st.info("💡 Configurez GCP_SERVICE_ACCOUNT dans les variables d'environnement")
+            return None
         
+        # Autoriser avec gspread
         gc = gspread.authorize(creds)
         return gc
     except Exception as e:
@@ -570,29 +583,43 @@ def page_affectations(data, spreadsheet):
                                     nouvel_id = f'AFF_{numero:03d}'
                             
                             # Écrire dans Google Sheets
-                            worksheet = spreadsheet.worksheet('Affectations')
-                            nouvelle_ligne = [
-                                nouvel_id,
-                                datetime.now().strftime('%Y-%m-%d %H:%M'),
-                                produit,
-                                int(semaine_debut),
-                                semaine_fin_texte,
-                                lot,
-                                float(tonnage_dispo),
-                                float(tonnage_brut),
-                                float(ecart),
-                                'Active',
-                                'Streamlit',
-                                ''
-                            ]
-                            worksheet.append_row(nouvelle_ligne)
+                            try:
+                                worksheet = spreadsheet.worksheet('Affectations')
+                                nouvelle_ligne = [
+                                    nouvel_id,
+                                    datetime.now().strftime('%Y-%m-%d %H:%M'),
+                                    produit,
+                                    int(semaine_debut),
+                                    semaine_fin_texte,
+                                    lot,
+                                    float(tonnage_dispo),
+                                    float(tonnage_brut),
+                                    float(ecart),
+                                    'Active',
+                                    'Streamlit',
+                                    ''
+                                ]
+                                worksheet.append_row(nouvelle_ligne, value_input_option='USER_ENTERED')
+                                
+                                st.success(f"✅ Affectation {nouvel_id} créée dans Google Sheets")
+                                st.cache_data.clear()
+                                st.rerun()
                             
-                            st.success(f"✅ Affectation {nouvel_id} créée dans Google Sheets")
-                            st.cache_data.clear()
-                            st.rerun()
+                            except Exception as write_error:
+                                st.error(f"❌ Erreur écriture Google Sheets : {write_error}")
+                                st.info("💡 Essayez de recharger la page ou vérifiez les permissions du service account")
+                                # Afficher quand même les données calculées
+                                st.json({
+                                    'ID': nouvel_id,
+                                    'Produit': produit,
+                                    'Lot': lot,
+                                    'Tonnage_Brut': tonnage_brut,
+                                    'Tonnage_Dispo': tonnage_dispo,
+                                    'Écart': ecart
+                                })
                             
                         except Exception as e:
-                            st.error(f"❌ Erreur : {e}")
+                            st.error(f"❌ Erreur calcul : {e}")
                 else:
                     st.warning("Aucun lot compatible")
     
