@@ -145,7 +145,8 @@ st.markdown("""
 # CONNEXION GOOGLE SHEETS
 # =============================================================================
 
-@st.cache_resource
+# Pas de cache pour éviter les problèmes d'auth
+# @st.cache_resource
 def connect_to_sheets():
     """Connexion à Google Sheets avec gestion d'erreurs améliorée"""
     try:
@@ -159,6 +160,9 @@ def connect_to_sheets():
                     "https://www.googleapis.com/auth/drive"
                 ]
             )
+            # Créer un nouveau client gspread à chaque fois
+            gc = gspread.authorize(creds)
+            return gc
         # Streamlit Cloud : secrets
         elif 'gcp_service_account' in st.secrets:
             creds = Credentials.from_service_account_info(
@@ -168,16 +172,17 @@ def connect_to_sheets():
                     "https://www.googleapis.com/auth/drive"
                 ]
             )
+            gc = gspread.authorize(creds)
+            return gc
         else:
             st.error("❌ Aucune authentification configurée")
             st.info("💡 Configurez GCP_SERVICE_ACCOUNT dans les variables d'environnement")
             return None
         
-        # Autoriser avec gspread
-        gc = gspread.authorize(creds)
-        return gc
     except Exception as e:
         st.error(f"Erreur connexion : {e}")
+        import traceback
+        st.error(traceback.format_exc())
         return None
 
 @st.cache_data(ttl=30)
@@ -1199,8 +1204,11 @@ def page_ordres_lavage(data, spreadsheet):
                     st.error(f"Erreur : {e}")
         
         with col2:
-            if st.button("✅ Marquer terminé", use_container_width=True, key="ol_termine"):
-                st.info("💡 Utilisez le formulaire de saisie des résultats pour terminer un OL")
+            # Formulaire de saisie des résultats
+            if st.button("✅ Saisir résultats", use_container_width=True, key="ol_termine"):
+                # Stocker dans session_state pour afficher le formulaire
+                st.session_state['show_form_ol'] = True
+                st.session_state['ol_to_complete'] = ol_selectionnes
         
         with col3:
             if PDF_AVAILABLE and st.button("🖨️ Imprimer PDF", use_container_width=True, key="ol_pdf"):
@@ -1220,6 +1228,146 @@ def page_ordres_lavage(data, spreadsheet):
         with col4:
             st.markdown(f"**{len(ol_selectionnes)} OL sélectionnés**")
             st.markdown(f"**{sum(ol['Tonnage_Brut'] for ol in ol_selectionnes):.1f}T**")
+    
+    # Formulaire de saisie des résultats
+    if 'show_form_ol' in st.session_state and st.session_state['show_form_ol']:
+        st.markdown("---")
+        st.markdown("### 📝 SAISIE DES RÉSULTATS DE LAVAGE")
+        
+        ol_to_complete = st.session_state.get('ol_to_complete', [])
+        
+        if len(ol_to_complete) == 1:
+            ol = ol_to_complete[0]
+            
+            with st.form("form_resultats_lavage"):
+                st.markdown(f"**OL : {ol['ID_Lavage']} - Lot : {ol['Lot_ID']}**")
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.markdown("#### Tonnages")
+                    tonnage_brut_saisi = st.number_input(
+                        "Tonnage brut lavé (T)", 
+                        value=float(ol['Tonnage_Brut']),
+                        min_value=0.0,
+                        step=0.1
+                    )
+                    tonnage_net = st.number_input(
+                        "Tonnage net obtenu (T)", 
+                        value=float(ol['Tonnage_Brut']) * 0.78,  # Estimation initiale
+                        min_value=0.0,
+                        step=0.1
+                    )
+                    
+                    if tonnage_brut_saisi > 0:
+                        taux_dechet_calcule = ((tonnage_brut_saisi - tonnage_net) / tonnage_brut_saisi) * 100
+                        st.info(f"📊 Taux déchet calculé : {taux_dechet_calcule:.2f}%")
+                
+                with col2:
+                    st.markdown("#### Détail des déchets (%)")
+                    taux_purs = st.number_input("Purs (%)", value=18.0, min_value=0.0, max_value=100.0, step=0.1)
+                    taux_grenailles = st.number_input("Grenailles (%)", value=3.0, min_value=0.0, max_value=100.0, step=0.1)
+                    taux_terre = st.number_input("Terre (%)", value=1.0, min_value=0.0, max_value=100.0, step=0.1)
+                    
+                    total_dechets = taux_purs + taux_grenailles + taux_terre
+                    if abs(total_dechets - taux_dechet_calcule) > 0.5:
+                        st.warning(f"⚠️ Total déchets saisis ({total_dechets:.1f}%) ≠ calculé ({taux_dechet_calcule:.1f}%)")
+                
+                st.markdown("#### Stockage")
+                zone_stockage = st.text_input("Zone de stockage", value="Z1")
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    submit = st.form_submit_button("✅ Valider et créer stock lavé", use_container_width=True)
+                with col2:
+                    cancel = st.form_submit_button("❌ Annuler", use_container_width=True)
+                
+                if cancel:
+                    st.session_state['show_form_ol'] = False
+                    st.rerun()
+                
+                if submit:
+                    try:
+                        # 1. Générer ID pour le stock lavé
+                        lots_laves = data['Lots_Lavés']
+                        if len(lots_laves) == 0:
+                            nouvel_id_stock = 'SL_001'
+                        else:
+                            dernier_id = lots_laves['Stock_Lavé_ID'].max()
+                            if pd.isna(dernier_id) or dernier_id == '':
+                                nouvel_id_stock = 'SL_001'
+                            else:
+                                numero = int(dernier_id.split('_')[1]) + 1
+                                nouvel_id_stock = f'SL_{numero:03d}'
+                        
+                        # 2. Créer ligne dans Lots_Lavés
+                        worksheet_laves = spreadsheet.worksheet('Lots_Lavés')
+                        nouvelle_ligne_stock = [
+                            nouvel_id_stock,
+                            ol['Lot_ID'],
+                            ol['ID_Lavage'],
+                            datetime.now().strftime('%Y-%m-%d'),
+                            ol['Ligne_Lavage'],
+                            ol['Code_Variété'],
+                            float(tonnage_brut_saisi),
+                            float(tonnage_net),
+                            float(taux_dechet_calcule / 100),  # En décimal
+                            float(taux_purs / 100),
+                            float(taux_grenailles / 100),
+                            float(taux_terre / 100),
+                            zone_stockage,
+                            float(tonnage_net),  # Tonnage_Net_Restant = Tonnage_Net au début
+                            'Disponible',
+                            datetime.now().strftime('%Y-%m-%d %H:%M')
+                        ]
+                        worksheet_laves.append_row(nouvelle_ligne_stock, value_input_option='USER_ENTERED')
+                        
+                        # 3. Mettre à jour le lot d'origine (décrémenter le tonnage)
+                        worksheet_lots = spreadsheet.worksheet('Lots')
+                        all_lots = worksheet_lots.get_all_values()
+                        headers_lots = all_lots[0]
+                        
+                        lot_id_idx = headers_lots.index('Lot_ID')
+                        tonnage_idx = headers_lots.index('Tonnage_Brut_Restant')
+                        
+                        for row_idx, row_data in enumerate(all_lots[1:], start=2):
+                            if row_data[lot_id_idx] == ol['Lot_ID']:
+                                ancien_tonnage = float(row_data[tonnage_idx])
+                                nouveau_tonnage = ancien_tonnage - tonnage_brut_saisi
+                                worksheet_lots.update_cell(row_idx, tonnage_idx + 1, nouveau_tonnage)
+                                break
+                        
+                        # 4. Changer le statut de l'OL à "Terminé"
+                        worksheet_planning = spreadsheet.worksheet('Planning_Lavage')
+                        all_planning = worksheet_planning.get_all_values()
+                        headers_planning = all_planning[0]
+                        
+                        id_lavage_idx = headers_planning.index('ID_Lavage')
+                        statut_idx = headers_planning.index('Statut')
+                        
+                        for row_idx, row_data in enumerate(all_planning[1:], start=2):
+                            if row_data[id_lavage_idx] == ol['ID_Lavage']:
+                                worksheet_planning.update_cell(row_idx, statut_idx + 1, 'Terminé')
+                                break
+                        
+                        st.success(f"✅ Stock lavé {nouvel_id_stock} créé avec succès !")
+                        st.success(f"✅ Lot {ol['Lot_ID']} mis à jour")
+                        st.success(f"✅ OL {ol['ID_Lavage']} terminé")
+                        
+                        # Nettoyer le state
+                        st.session_state['show_form_ol'] = False
+                        st.cache_data.clear()
+                        st.rerun()
+                        
+                    except Exception as e:
+                        st.error(f"❌ Erreur : {e}")
+                        import traceback
+                        st.error(traceback.format_exc())
+        else:
+            st.warning("⚠️ Sélectionnez un seul OL pour saisir les résultats")
+            if st.button("Fermer"):
+                st.session_state['show_form_ol'] = False
+                st.rerun()
 
 def main():
     menu = sidebar_navigation()
